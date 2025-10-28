@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chat 2x2</title>
+  <title>Chat por enlace</title>
   <style>
     :root { --bg:#0b1220; --card:#111a2b; --muted:#8892a6; --text:#e6edf3; --accent:#7cc0ff; --border:#22314d; }
     * { box-sizing: border-box; }
@@ -33,18 +33,13 @@
       .row { grid-template-columns: 2fr 1fr; }
       .chat { height: calc(100vh - 180px); }
     }
-  .presence{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-wrap:wrap;gap:8px}
-.presence-item{display:flex;align-items:center;gap:6px;background:#0d1626;border:1px solid var(--border);border-radius:12px;padding:6px 8px}
-.dot{width:8px;height:8px;border-radius:50%;background:#ef4444}
-.dot.green{background:#22c55e}
-.icon-btn{background:transparent;border:none;cursor:pointer;color:var(--muted);margin-left:8px}
-.icon-btn:hover{color:var(--accent)}
-</style>
+  </style>
 </head>
 <body>
   <header>
     <div class="container">
-      <h1 style="margin:0 0 8px">Chat 2x2</h1>
+      <h1 style="margin:0 0 8px">💬 Chat por enlace</h1>
+      <p class="muted" style="margin:0">Comparte la URL y cualquiera con el enlace podrá leer y escribir. Los mensajes quedan guardados aunque no haya nadie online.</p>
     </div>
   </header>
 
@@ -57,25 +52,13 @@
               <strong>Sala:</strong>
               <code id="roomCode" style="padding:4px 8px; background:#0d1626; border:1px solid var(--border); border-radius:8px"></code>
               <button id="copyBtn" title="Copiar enlace">Copiar enlace</button>
-              <button id="newRoomBtn" title="Nueva sala">Nueva sala</button>
-              <button id="joinRoomBtn" title="Unirse a sala">Unirse</button>
             </div>
             <small class="muted">Comparte este enlace para invitar a otros.</small>
           </div>
           <div class="stack">
             <label for="name">Tu nombre</label>
-            <input id="name" type="text" placeholder="Escribe tu nick" style="width:220px" />
-            
-            $1Escribe tu nick$2
+            <input id="name" type="text" placeholder="Ej.: Bryan" style="width:200px" />
           </div>
-        </div>
-
-        <div id="presenceBox" class="card" style="padding:8px">
-          <div class="stack" style="justify-content: space-between;">
-            <strong>Usuarios</strong>
-            <small id="userCountLabel" class="muted">0</small>
-          </div>
-          <ul id="presenceList" class="presence"></ul>
         </div>
 
         <ul id="messages" class="card" style="padding:12px; overflow:auto"></ul>
@@ -86,7 +69,15 @@
         </form>
       </section>
 
-      
+      <aside class="card">
+        <h3 style="margin-top:0">Cómo funciona</h3>
+        <ol>
+          <li>Esta página usa <b>Firebase</b> (Auth anónima + Firestore) para guardar mensajes.</li>
+          <li>La <b>sala</b> está en la URL como <code>?room=…</code>. Si no hay, se crea una nueva al entrar.</li>
+          <li>Cualquiera con el enlace puede leer y enviar mensajes.</li>
+        </ol>
+        <p class="muted">Sugerencia: usa salas con nombres difíciles de adivinar (por ej. <code>conta-2025-x3gmal</code>).</p>
+      </aside>
     </div>
   </main>
 
@@ -118,10 +109,7 @@
       if(!room){
         room = 'sala-' + uid();
         url.searchParams.set('room', room);
-        window.location.replace(url.toString());
-      }
-      return room;
-    }, '', url.toString());
+        history.replaceState({}, '', url.toString());
       }
       return room;
     }
@@ -132,7 +120,7 @@
     }
 
     // --- Estado ---
-    const state = { room: getRoom(), user: null, name: localStorage.getItem('chat_name') || '', isOwner: false };
+    const state = { room: getRoom(), user: null, name: localStorage.getItem('chat_name') || '' };
     $('#name').value = state.name;
     $('#roomCode').textContent = state.room;
     $('#copyBtn').addEventListener('click', async () => {
@@ -142,17 +130,9 @@
       setTimeout(()=> $('#copyBtn').textContent = 'Copiar enlace', 1200);
     });
 
-    $('#name').addEventListener('change', async (e)=>{
+    $('#name').addEventListener('change', (e)=>{
       state.name = e.target.value.trim().slice(0,40) || 'Anónimo';
       localStorage.setItem('chat_name', state.name);
-      try {
-        const roomRef = firebase.firestore().collection('rooms').doc(state.room);
-        if (state.user) {
-          await roomRef.collection('profiles').doc(state.user.uid).set({ name: state.name, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-          await roomRef.collection('members').doc(state.user.uid).set({ name: state.name }, { merge: true });
-        }
-      } catch(err){ console.warn(err); }
-    });
     });
 
     // --- Firebase init ---
@@ -179,62 +159,6 @@
       const roomRef = db.collection('rooms').doc(state.room);
       const msgsRef = roomRef.collection('messages');
 
-      // Propiedad: dueño de la sala (primer usuario anónimo que entra)
-      async function ensureOwner(){
-        const snap = await roomRef.get();
-        const data = snap.data() || {};
-        if(!data.ownerUid){
-          await roomRef.set({ ownerUid: state.user.uid, createdAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-          state.isOwner = true;
-        } else {
-          state.isOwner = (data.ownerUid === state.user.uid);
-        }
-      }
-      ensureOwner();
-
-      // Presencia y perfiles (conteo de participantes únicos por UID)
-      const membersRef = roomRef.collection('members');
-      const myMemberRef = membersRef.doc(state.user.uid);
-      const profilesRef = roomRef.collection('profiles');
-
-      async function heartbeat(){
-        const name = (state.name||'Anónimo').slice(0,40);
-        await myMemberRef.set({ name, lastActiveAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-        await profilesRef.doc(state.user.uid).set({ name, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
-      }
-      heartbeat();
-      setInterval(()=>{ if(!document.hidden) heartbeat(); }, 20000);
-      document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) heartbeat(); });
-
-      membersRef.onSnapshot((snap)=>{
-        const list = [];
-        const now = Date.now();
-        snap.forEach(d=>{
-          const m = d.data();
-          const last = m.lastActiveAt && m.lastActiveAt.toMillis ? m.lastActiveAt.toMillis() : 0;
-          const active = (now - last) < 35000;
-          list.push({ name: m.name || 'Anónimo', active });
-        });
-        renderPresence(list);
-      });
-
-      profilesRef.onSnapshot((snap)=>{
-        const el = document.getElementById('userCountLabel');
-        if(el) el.textContent = String(snap.size);
-      });
-
-      function renderPresence(list){
-        const ul = document.getElementById('presenceList');
-        if(!ul) return;
-        ul.innerHTML = '';
-        list.forEach(p=>{
-          const li = document.createElement('li');
-          li.className = 'presence-item';
-          li.innerHTML = `<span class=\"dot ${p.active ? 'green':'red'}\"></span><span>${p.name}</span>`;
-          ul.appendChild(li);
-        });
-      }
-
       // Suscripción en tiempo real
       msgsRef.orderBy('createdAt').limit(200).onSnapshot((snap) => {
         messagesEl.innerHTML = '';
@@ -247,15 +171,7 @@
             <div class="meta"><b>${(m.name||'Anónimo')}</b> <time>· ${fmt(m.createdAt)}</time></div>
             <div>${(m.text||'').replace(/[<>]/g,'')}</div>
           `;
-          if(((state.user && m.uid === state.user.uid) || state.isOwner)){
-          const btn=document.createElement('button');
-          btn.className='icon-btn';
-          btn.title='Eliminar';
-          btn.textContent='🗑';
-          btn.addEventListener('click', async ()=>{ if(confirm('Eliminar este mensaje?')) await msgsRef.doc(doc.id).delete(); });
-          li.querySelector('.meta')?.appendChild(btn);
-        }
-        messagesEl.appendChild(li);
+          messagesEl.appendChild(li);
         });
         messagesEl.scrollTop = messagesEl.scrollHeight;
       });
@@ -282,27 +198,5 @@
       });
     }
   </script>
-<script>
-(function(){
-  const newBtn = document.getElementById('newRoomBtn');
-  if(newBtn){ newBtn.addEventListener('click', ()=>{
-    const room = 'sala-' + (Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8));
-    const url = new URL(location.href);
-    url.searchParams.set('room', room);
-    location.href = url.toString();
-  }); }
-  const joinBtn = document.getElementById('joinRoomBtn');
-  if(joinBtn){ joinBtn.addEventListener('click', ()=>{
-    const input = prompt('Nombre de la sala a la que deseas unirte:');
-    if(!input) return;
-    let room = input.trim();
-    room = room.replaceAll(' ', '-').slice(0,60);
-    if(!room) return;
-    const url = new URL(location.href);
-    url.searchParams.set('room', room);
-    location.href = url.toString();
-  }); }
-})();
-</script>
 </body>
 </html>
