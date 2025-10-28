@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chat por enlace</title>
+  <title>Chat 2x2</title>
   <style>
     :root { --bg:#0b1220; --card:#111a2b; --muted:#8892a6; --text:#e6edf3; --accent:#7cc0ff; --border:#22314d; }
     * { box-sizing: border-box; }
@@ -57,11 +57,15 @@
               <strong>Sala:</strong>
               <code id="roomCode" style="padding:4px 8px; background:#0d1626; border:1px solid var(--border); border-radius:8px"></code>
               <button id="copyBtn" title="Copiar enlace">Copiar enlace</button>
+              <button id="newRoomBtn" title="Nueva sala">Nueva sala</button>
+              <button id="joinRoomBtn" title="Unirse a sala">Unirse</button>
             </div>
             <small class="muted">Comparte este enlace para invitar a otros.</small>
           </div>
           <div class="stack">
             <label for="name">Tu nombre</label>
+            <input id="name" type="text" placeholder="Escribe tu nick" style="width:220px" />
+            
             $1Escribe tu nick$2
           </div>
         </div>
@@ -114,7 +118,10 @@
       if(!room){
         room = 'sala-' + uid();
         url.searchParams.set('room', room);
-        history.replaceState({}, '', url.toString());
+        window.location.replace(url.toString());
+      }
+      return room;
+    }, '', url.toString());
       }
       return room;
     }
@@ -275,5 +282,27 @@
       });
     }
   </script>
+<script>
+(function(){
+  const newBtn = document.getElementById('newRoomBtn');
+  if(newBtn){ newBtn.addEventListener('click', ()=>{
+    const room = 'sala-' + (Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8));
+    const url = new URL(location.href);
+    url.searchParams.set('room', room);
+    location.href = url.toString();
+  }); }
+  const joinBtn = document.getElementById('joinRoomBtn');
+  if(joinBtn){ joinBtn.addEventListener('click', ()=>{
+    const input = prompt('Nombre de la sala a la que deseas unirte:');
+    if(!input) return;
+    let room = input.trim();
+    room = room.replaceAll(' ', '-').slice(0,60);
+    if(!room) return;
+    const url = new URL(location.href);
+    url.searchParams.set('room', room);
+    location.href = url.toString();
+  }); }
+})();
+</script>
 </body>
 </html>
