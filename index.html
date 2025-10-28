@@ -54,14 +54,7 @@
   <main class="container">
     <div class="row">
       <section class="card chat">
-        <div class="stack" style="justify-content: space-between;">
-          <div>
-            <div class="stack">
-              <strong>Sala:</strong>
-              <code id="roomCode" style="padding:4px 8px; background:#0d1626; border:1px solid var(--border); border-radius:8px"></code>
-              <button id="copyBtn" title="Copiar enlace">Copiar enlace</button>
-            </div>
-          </div>
+        <div class="stack" style="justify-content: flex-end;">
           <div class="stack">
             <label for="name">Escribe tu nick</label>
             <input id="name" type="text" placeholder="Escribe tu nick" style="width:200px" />
@@ -137,13 +130,6 @@
       presenceInterval: null
     };
     $('#name').value = state.rawName;
-    $('#roomCode').textContent = state.room;
-    $('#copyBtn').addEventListener('click', async () => {
-      const shareUrl = `${location.origin}${location.pathname}?room=${encodeURIComponent(state.room)}`;
-      await navigator.clipboard.writeText(shareUrl);
-      $('#copyBtn').textContent = '¡Copiado!';
-      setTimeout(()=> $('#copyBtn').textContent = 'Copiar enlace', 1200);
-    });
 
     function syncDisplayName(raw){
       const next = raw.trim().slice(0,40);
