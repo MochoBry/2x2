@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chat por enlace</title>
+  <style>
+    :root { --bg:#0b1220; --card:#111a2b; --muted:#8892a6; --text:#e6edf3; --accent:#7cc0ff; --border:#22314d; }
+    * { box-sizing: border-box; }
+    body { margin:0; font-family: system-ui,-apple-system,Segoe UI,Roboto,Inter,Ubuntu,"Helvetica Neue",Arial,sans-serif; background: var(--bg); color: var(--text); }
+    header { padding: 20px; border-bottom: 1px solid var(--border); background: linear-gradient(180deg, rgba(124,192,255,0.08), transparent 60%); }
+    .container { max-width: 900px; margin: 0 auto; padding: 16px; }
+    .row { display: grid; grid-template-columns: 1fr; gap: 12px; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 12px; }
+    .stack { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    input, button, textarea { font: inherit; }
+    input[type="text"] { background: #0d1626; border: 1px solid var(--border); color: var(--text); padding: 10px 12px; border-radius: 12px; outline: none; width: 100%; }
+    input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(124,192,255,0.2); }
+    button { background: #14223a; color: var(--text); border:1px solid var(--border); padding: 10px 14px; border-radius: 12px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    small, .muted { color: var(--muted); }
+
+    .chat { display:grid; grid-template-rows: auto 1fr auto; height: calc(100vh - 160px); gap:12px; }
+    #messages { list-style: none; padding: 0; margin: 0; display:flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+    .bubble { max-width: 70%; padding: 10px 12px; border:1px solid var(--border); border-radius: 14px; background: #0d1626; }
+    .me { align-self: flex-end; background: #0f2238; }
+    .meta { display:flex; gap:8px; align-items:center; margin-bottom: 4px; }
+    .meta b { font-weight: 600; }
+    .meta time { font-size: 12px; color: var(--muted); }
+
+    form { display:flex; gap:10px; }
+    @media (min-width: 720px) {
+      .row { grid-template-columns: 2fr 1fr; }
+      .chat { height: calc(100vh - 180px); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container">
+      <h1 style="margin:0 0 8px">💬 Chat por enlace</h1>
+      <p class="muted" style="margin:0">Comparte la URL y cualquiera con el enlace podrá leer y escribir. Los mensajes quedan guardados aunque no haya nadie online.</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="row">
+      <section class="card chat">
+        <div class="stack" style="justify-content: space-between;">
+          <div>
+            <div class="stack">
+              <strong>Sala:</strong>
+              <code id="roomCode" style="padding:4px 8px; background:#0d1626; border:1px solid var(--border); border-radius:8px"></code>
+              <button id="copyBtn" title="Copiar enlace">Copiar enlace</button>
+            </div>
+            <small class="muted">Comparte este enlace para invitar a otros.</small>
+          </div>
+          <div class="stack">
+            <label for="name">Tu nombre</label>
+            <input id="name" type="text" placeholder="Ej.: Bryan" style="width:200px" />
+          </div>
+        </div>
+
+        <ul id="messages" class="card" style="padding:12px; overflow:auto"></ul>
+
+        <form id="messageForm" autocomplete="off">
+          <input id="messageInput" type="text" placeholder="Escribe un mensaje…" maxlength="500" />
+          <button type="submit">Enviar</button>
+        </form>
+      </section>
+
+      <aside class="card">
+        <h3 style="margin-top:0">Cómo funciona</h3>
+        <ol>
+          <li>Esta página usa <b>Firebase</b> (Auth anónima + Firestore) para guardar mensajes.</li>
+          <li>La <b>sala</b> está en la URL como <code>?room=…</code>. Si no hay, se crea una nueva al entrar.</li>
+          <li>Cualquiera con el enlace puede leer y enviar mensajes.</li>
+        </ol>
+        <p class="muted">Sugerencia: usa salas con nombres difíciles de adivinar (por ej. <code>conta-2025-x3gmal</code>).</p>
+      </aside>
+    </div>
+  </main>
+
+  <!-- Firebase CDN (compat) -->
+<script src="https://www.gstatic.com/firebasejs/12.4.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.4.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/12.4.0/firebase-firestore-compat.js"></script>
+
+  <!-- 2) Sustituye el objeto firebaseConfig con el que te da la consola -->
+  <script>
+    // 🔧 Reemplaza estos valores por los de tu proyecto Firebase (App Web -> SDK de configuración)
+    const firebaseConfig = {
+      apiKey: "AIzaSyAzi2MuewrqHcFV_t73id3HMa8svxEyrxc",
+      authDomain: "res-bf6b7.firebaseapp.com",
+      projectId: "res-bf6b7",
+      storageBucket: "res-bf6b7.firebasestorage.app",
+      messagingSenderId: "746937668794",
+      appId: "1:746937668794:web:993afc2a5a3bb863059e83"
+    };
+  </script>
+
+  <script>
+    // --- Utilidades ---
+    function $(sel){ return document.querySelector(sel); }
+    function uid(){ return Math.random().toString(36).slice(2, 8) + Math.random().toString(36).slice(2, 8); }
+    function getRoom(){
+      const url = new URL(window.location.href);
+      let room = url.searchParams.get('room');
+      if(!room){
+        room = 'sala-' + uid();
+        url.searchParams.set('room', room);
+        history.replaceState({}, '', url.toString());
+      }
+      return room;
+    }
+    function fmt(ts){
+      if(!ts) return 'enviando…';
+      const d = ts.toDate ? ts.toDate() : new Date(ts);
+      return d.toLocaleString();
+    }
+
+    // --- Estado ---
+    const state = { room: getRoom(), user: null, name: localStorage.getItem('chat_name') || '' };
+    $('#name').value = state.name;
+    $('#roomCode').textContent = state.room;
+    $('#copyBtn').addEventListener('click', async () => {
+      const shareUrl = `${location.origin}${location.pathname}?room=${encodeURIComponent(state.room)}`;
+      await navigator.clipboard.writeText(shareUrl);
+      $('#copyBtn').textContent = '¡Copiado!';
+      setTimeout(()=> $('#copyBtn').textContent = 'Copiar enlace', 1200);
+    });
+
+    $('#name').addEventListener('change', (e)=>{
+      state.name = e.target.value.trim().slice(0,40) || 'Anónimo';
+      localStorage.setItem('chat_name', state.name);
+    });
+
+    // --- Firebase init ---
+    // Nota: necesitas haber pegado los <script> CDN de Firebase encima y tu firebaseConfig real.
+    const app = firebase.initializeApp(firebaseConfig);
+    const auth = firebase.auth();
+    const db = firebase.firestore();
+
+    // Inicia sesión anónima
+    auth.signInAnonymously().catch(console.error);
+
+    auth.onAuthStateChanged((user) => {
+      state.user = user;
+      if(user){
+        startChat();
+      }
+    });
+
+    function startChat(){
+      const messagesEl = $('#messages');
+      const form = $('#messageForm');
+      const input = $('#messageInput');
+
+      const roomRef = db.collection('rooms').doc(state.room);
+      const msgsRef = roomRef.collection('messages');
+
+      // Suscripción en tiempo real
+      msgsRef.orderBy('createdAt').limit(200).onSnapshot((snap) => {
+        messagesEl.innerHTML = '';
+        snap.forEach((doc) => {
+          const m = doc.data();
+          const li = document.createElement('li');
+          const mine = state.user && m.uid === state.user.uid;
+          li.className = 'bubble' + (mine ? ' me' : '');
+          li.innerHTML = `
+            <div class="meta"><b>${(m.name||'Anónimo')}</b> <time>· ${fmt(m.createdAt)}</time></div>
+            <div>${(m.text||'').replace(/[<>]/g,'')}</div>
+          `;
+          messagesEl.appendChild(li);
+        });
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      });
+
+      // Enviar mensaje
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const text = (input.value||'').trim();
+        if(!text) return;
+        const name = (state.name||'Anónimo').slice(0,40);
+        const payload = {
+          text: text.slice(0,500),
+          name,
+          uid: state.user ? state.user.uid : null,
+          roomId: state.room,
+          createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        };
+        try {
+          await msgsRef.add(payload);
+          input.value = '';
+        } catch (err) {
+          alert('Error al enviar: ' + err.message);
+        }
+      });
+    }
+  </script>
+</body>
+</html>
