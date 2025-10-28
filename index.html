@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Chat por enlace</title>
+  <title>Chat 2x2</title>
   <style>
     :root { --bg:#0b1220; --card:#111a2b; --muted:#8892a6; --text:#e6edf3; --accent:#7cc0ff; --border:#22314d; }
     * { box-sizing: border-box; }
@@ -29,6 +29,15 @@
     .meta time { font-size: 12px; color: var(--muted); }
 
     form { display:flex; gap:10px; }
+    .participants { display: flex; flex-direction: column; gap: 12px; }
+    #participantsList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .participant { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: #0d1626; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff6161; }
+    .status-dot.active { background: #3bd87a; }
+    .participant-name { flex: 1; font-weight: 500; }
+    .delete-btn { margin-top: 8px; background: transparent; border: 1px solid rgba(255,255,255,0.1); color: var(--muted); padding: 4px 8px; border-radius: 8px; font-size: 12px; align-self: flex-end; }
+    .delete-btn:hover { color: #ff7b7b; border-color: #ff7b7b; }
+    .participants-empty { color: var(--muted); font-size: 14px; }
     @media (min-width: 720px) {
       .row { grid-template-columns: 2fr 1fr; }
       .chat { height: calc(100vh - 180px); }
@@ -38,8 +47,7 @@
 <body>
   <header>
     <div class="container">
-      <h1 style="margin:0 0 8px">💬 Chat por enlace</h1>
-      <p class="muted" style="margin:0">Comparte la URL y cualquiera con el enlace podrá leer y escribir. Los mensajes quedan guardados aunque no haya nadie online.</p>
+      <h1 style="margin:0 0 8px">💬 Chat 2x2</h1>
     </div>
   </header>
 
@@ -53,11 +61,10 @@
               <code id="roomCode" style="padding:4px 8px; background:#0d1626; border:1px solid var(--border); border-radius:8px"></code>
               <button id="copyBtn" title="Copiar enlace">Copiar enlace</button>
             </div>
-            <small class="muted">Comparte este enlace para invitar a otros.</small>
           </div>
           <div class="stack">
-            <label for="name">Tu nombre</label>
-            <input id="name" type="text" placeholder="Ej.: Bryan" style="width:200px" />
+            <label for="name">Escribe tu nick</label>
+            <input id="name" type="text" placeholder="Escribe tu nick" style="width:200px" />
           </div>
         </div>
 
@@ -68,15 +75,13 @@
           <button type="submit">Enviar</button>
         </form>
       </section>
-
-      <aside class="card">
-        <h3 style="margin-top:0">Cómo funciona</h3>
-        <ol>
-          <li>Esta página usa <b>Firebase</b> (Auth anónima + Firestore) para guardar mensajes.</li>
-          <li>La <b>sala</b> está en la URL como <code>?room=…</code>. Si no hay, se crea una nueva al entrar.</li>
-          <li>Cualquiera con el enlace puede leer y enviar mensajes.</li>
-        </ol>
-        <p class="muted">Sugerencia: usa salas con nombres difíciles de adivinar (por ej. <code>conta-2025-x3gmal</code>).</p>
+      <aside class="card participants">
+        <div class="stack" style="justify-content: space-between; align-items: flex-start;">
+          <h3 style="margin:0">Participantes</h3>
+          <span id="participantsCount" class="muted">0</span>
+        </div>
+        <ul id="participantsList"></ul>
+        <p id="participantsEmpty" class="participants-empty" style="display:none">Aún no hay participantes.</p>
       </aside>
     </div>
   </main>
@@ -120,8 +125,18 @@
     }
 
     // --- Estado ---
-    const state = { room: getRoom(), user: null, name: localStorage.getItem('chat_name') || '' };
-    $('#name').value = state.name;
+    const storedNameRaw = (localStorage.getItem('chat_name') || '').trim().slice(0,40);
+    const storedName = storedNameRaw.replace(/[<>]/g,'');
+    const state = {
+      room: getRoom(),
+      user: null,
+      name: storedName || 'Anónimo',
+      rawName: storedName,
+      isCreator: false,
+      participantRef: null,
+      presenceInterval: null
+    };
+    $('#name').value = state.rawName;
     $('#roomCode').textContent = state.room;
     $('#copyBtn').addEventListener('click', async () => {
       const shareUrl = `${location.origin}${location.pathname}?room=${encodeURIComponent(state.room)}`;
@@ -130,9 +145,28 @@
       setTimeout(()=> $('#copyBtn').textContent = 'Copiar enlace', 1200);
     });
 
+    function syncDisplayName(raw){
+      const next = raw.trim().slice(0,40);
+      const sanitized = next.replace(/[<>]/g,'');
+      state.name = sanitized || 'Anónimo';
+      state.rawName = sanitized;
+      if(sanitized){
+        localStorage.setItem('chat_name', sanitized);
+      } else {
+        localStorage.removeItem('chat_name');
+      }
+      if(state.participantRef){
+        state.participantRef.set({
+          name: state.name,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          lastSeen: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).catch(console.error);
+      }
+      $('#name').value = state.rawName;
+    }
+
     $('#name').addEventListener('change', (e)=>{
-      state.name = e.target.value.trim().slice(0,40) || 'Anónimo';
-      localStorage.setItem('chat_name', state.name);
+      syncDisplayName(e.target.value);
     });
 
     // --- Firebase init ---
@@ -147,17 +181,94 @@
     auth.onAuthStateChanged((user) => {
       state.user = user;
       if(user){
-        startChat();
+        startChat().catch(console.error);
       }
     });
 
-    function startChat(){
+    async function startChat(){
       const messagesEl = $('#messages');
       const form = $('#messageForm');
       const input = $('#messageInput');
 
       const roomRef = db.collection('rooms').doc(state.room);
       const msgsRef = roomRef.collection('messages');
+      const participantsRef = roomRef.collection('participants');
+
+      async function ensureRoomCreator(){
+        try {
+          await db.runTransaction(async (tx) => {
+            const snap = await tx.get(roomRef);
+            if(!snap.exists){
+              tx.set(roomRef, {
+                creatorUid: state.user.uid,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+              });
+              state.isCreator = true;
+            } else {
+              const data = snap.data() || {};
+              state.isCreator = data.creatorUid === state.user.uid;
+            }
+          });
+        } catch (err) {
+          console.error(err);
+          const docSnap = await roomRef.get();
+          const data = docSnap.data() || {};
+          state.isCreator = data.creatorUid === state.user.uid;
+        }
+      }
+
+      await ensureRoomCreator();
+
+      state.participantRef = participantsRef.doc(state.user.uid);
+      try {
+        await state.participantRef.set({
+          name: state.name || 'Anónimo',
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          lastSeen: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+      } catch (err) {
+        console.error('No se pudo registrar el participante', err);
+      }
+
+      if(state.presenceInterval){
+        clearInterval(state.presenceInterval);
+      }
+      state.presenceInterval = setInterval(() => {
+        if(state.participantRef){
+          state.participantRef.set({
+            lastSeen: firebase.firestore.FieldValue.serverTimestamp()
+          }, { merge: true }).catch(()=>{});
+        }
+      }, 15000);
+
+      const participantsList = $('#participantsList');
+      const participantsCount = $('#participantsCount');
+      const participantsEmpty = $('#participantsEmpty');
+
+      participantsRef.onSnapshot((snap) => {
+        const now = Date.now();
+        const nodes = [];
+        let count = 0;
+        snap.forEach((doc) => {
+          const data = doc.data() || {};
+          const name = data.name || 'Anónimo';
+          const lastSeen = data.lastSeen && data.lastSeen.toDate ? data.lastSeen.toDate() : null;
+          const active = lastSeen ? (now - lastSeen.getTime() < 30000) : false;
+          count += 1;
+          const li = document.createElement('li');
+          li.className = 'participant';
+          const safeName = name.replace(/[<>]/g,'');
+          li.innerHTML = `
+            <span class="status-dot ${active ? 'active' : ''}"></span>
+            <span class="participant-name">${safeName}</span>
+          `;
+          nodes.push(li);
+        });
+        participantsList.innerHTML = '';
+        nodes.forEach((node) => participantsList.appendChild(node));
+        participantsCount.textContent = count.toString();
+        participantsEmpty.style.display = count ? 'none' : 'block';
+      });
 
       // Suscripción en tiempo real
       msgsRef.orderBy('createdAt').limit(200).onSnapshot((snap) => {
@@ -167,10 +278,30 @@
           const li = document.createElement('li');
           const mine = state.user && m.uid === state.user.uid;
           li.className = 'bubble' + (mine ? ' me' : '');
-          li.innerHTML = `
-            <div class="meta"><b>${(m.name||'Anónimo')}</b> <time>· ${fmt(m.createdAt)}</time></div>
-            <div>${(m.text||'').replace(/[<>]/g,'')}</div>
+          const safeText = (m.text||'').replace(/[<>]/g,'');
+          const safeName = (m.name||'Anónimo').replace(/[<>]/g,'');
+          const wrapper = document.createElement('div');
+          wrapper.innerHTML = `
+            <div class="meta"><b>${safeName}</b> <time>· ${fmt(m.createdAt)}</time></div>
+            <div>${safeText}</div>
           `;
+          li.appendChild(wrapper);
+          if(state.isCreator){
+            const delBtn = document.createElement('button');
+            delBtn.type = 'button';
+            delBtn.className = 'delete-btn';
+            delBtn.textContent = 'Eliminar';
+            delBtn.addEventListener('click', async () => {
+              if(confirm('¿Eliminar este mensaje?')){
+                try {
+                  await msgsRef.doc(doc.id).delete();
+                } catch (err) {
+                  alert('No se pudo eliminar: ' + err.message);
+                }
+              }
+            });
+            li.appendChild(delBtn);
+          }
           messagesEl.appendChild(li);
         });
         messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -190,13 +321,31 @@
           createdAt: firebase.firestore.FieldValue.serverTimestamp()
         };
         try {
-          await msgsRef.add(payload);
+          await Promise.all([
+            msgsRef.add(payload),
+            state.participantRef ? state.participantRef.set({
+              name,
+              lastSeen: firebase.firestore.FieldValue.serverTimestamp(),
+              updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            }, { merge: true }) : Promise.resolve()
+          ]);
           input.value = '';
         } catch (err) {
           alert('Error al enviar: ' + err.message);
         }
       });
     }
+
+    window.addEventListener('beforeunload', () => {
+      if(state.presenceInterval){
+        clearInterval(state.presenceInterval);
+      }
+      if(state.participantRef){
+        state.participantRef.set({
+          lastSeen: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true }).catch(()=>{});
+      }
+    });
   </script>
 </body>
 </html>
