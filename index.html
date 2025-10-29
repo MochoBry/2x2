@@ -31,16 +31,33 @@
     form { display:flex; gap:10px; }
     .participants { display: flex; flex-direction: column; gap: 12px; }
     #participantsList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-    .participant { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: #0d1626; }
+    .participant { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 12px; background: #0d1626; width: 100%; }
     .status-dot { width: 10px; height: 10px; border-radius: 50%; background: #ff6161; }
     .status-dot.active { background: #3bd87a; }
     .participant-name { flex: 1; font-weight: 500; }
     .delete-btn { margin-top: 8px; background: transparent; border: 1px solid rgba(255,255,255,0.1); color: var(--muted); padding: 4px 8px; border-radius: 8px; font-size: 12px; align-self: flex-end; }
     .delete-btn:hover { color: #ff7b7b; border-color: #ff7b7b; }
     .participants-empty { color: var(--muted); font-size: 14px; }
+    .participant-actions { margin-left: auto; display: flex; gap: 6px; }
+    .participant-actions button { background: transparent; border: 1px solid rgba(255,255,255,0.1); color: var(--muted); padding: 4px 8px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+    .participant-actions button:hover { color: #ff7b7b; border-color: #ff7b7b; }
+    .participant-actions button:disabled { opacity: 0.4; cursor: default; border-color: rgba(255,255,255,0.08); color: rgba(255,255,255,0.4); }
+    .name-input-group { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+    .name-input-group input { width: 100%; }
+    @media (max-width: 640px) {
+      body { font-size: 16px; }
+      header { padding: 16px; }
+      .container { padding: 12px; }
+      .chat { height: auto; min-height: 60vh; }
+      form { flex-direction: column; }
+      form button { width: 100%; }
+      .bubble { max-width: 100%; }
+      .stack { width: 100%; }
+    }
     @media (min-width: 720px) {
       .row { grid-template-columns: 2fr 1fr; }
       .chat { height: calc(100vh - 180px); }
+      .name-input-group { max-width: 260px; }
     }
   </style>
 </head>
@@ -54,10 +71,10 @@
   <main class="container">
     <div class="row">
       <section class="card chat">
-        <div class="stack" style="justify-content: flex-end;">
-          <div class="stack">
+        <div class="stack" style="justify-content: flex-end; width: 100%;">
+          <div class="name-input-group">
             <label for="name">Escribe tu nick</label>
-            <input id="name" type="text" placeholder="Escribe tu nick" style="width:200px" />
+            <input id="name" type="text" placeholder="Escribe tu nick" />
           </div>
         </div>
 
@@ -119,7 +136,7 @@
 
     // --- Estado ---
     const storedNameRaw = (localStorage.getItem('chat_name') || '').trim().slice(0,40);
-    const storedName = storedNameRaw.replace(/[<>]/g,'');
+    const storedName = storedNameRaw.replace(/[<>"']/g,'');
     const state = {
       room: getRoom(),
       user: null,
@@ -133,7 +150,7 @@
 
     function syncDisplayName(raw){
       const next = raw.trim().slice(0,40);
-      const sanitized = next.replace(/[<>]/g,'');
+      const sanitized = next.replace(/[<>"']/g, '');
       state.name = sanitized || 'Anónimo';
       state.rawName = sanitized;
       if(sanitized){
@@ -243,11 +260,41 @@
           count += 1;
           const li = document.createElement('li');
           li.className = 'participant';
-          const safeName = name.replace(/[<>]/g,'');
-          li.innerHTML = `
-            <span class="status-dot ${active ? 'active' : ''}"></span>
-            <span class="participant-name">${safeName}</span>
-          `;
+          const safeName = name.replace(/[<>"']/g,'');
+
+          const statusDot = document.createElement('span');
+          statusDot.className = 'status-dot' + (active ? ' active' : '');
+          li.appendChild(statusDot);
+
+          const nameEl = document.createElement('span');
+          nameEl.className = 'participant-name';
+          nameEl.textContent = safeName;
+          li.appendChild(nameEl);
+
+          if(state.isCreator && doc.id !== state.user.uid){
+            const actions = document.createElement('div');
+            actions.className = 'participant-actions';
+            const removeBtn = document.createElement('button');
+            removeBtn.type = 'button';
+            removeBtn.textContent = 'Quitar';
+            if(active){
+              removeBtn.disabled = true;
+              removeBtn.title = 'Solo puedes quitar participantes inactivos';
+            } else {
+              removeBtn.title = 'Quitar de la lista de participantes';
+              removeBtn.addEventListener('click', async () => {
+                if(confirm(`¿Quitar a "${safeName}" de la lista?`)){
+                  try {
+                    await participantsRef.doc(doc.id).delete();
+                  } catch (err) {
+                    alert('No se pudo quitar: ' + err.message);
+                  }
+                }
+              });
+            }
+            actions.appendChild(removeBtn);
+            li.appendChild(actions);
+          }
           nodes.push(li);
         });
         participantsList.innerHTML = '';
@@ -265,7 +312,7 @@
           const mine = state.user && m.uid === state.user.uid;
           li.className = 'bubble' + (mine ? ' me' : '');
           const safeText = (m.text||'').replace(/[<>]/g,'');
-          const safeName = (m.name||'Anónimo').replace(/[<>]/g,'');
+          const safeName = (m.name||'Anónimo').replace(/[<>"']/g,'');
           const wrapper = document.createElement('div');
           wrapper.innerHTML = `
             <div class="meta"><b>${safeName}</b> <time>· ${fmt(m.createdAt)}</time></div>
